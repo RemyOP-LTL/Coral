@@ -4,16 +4,12 @@
  * Drives a 28BYJ-48 stepper motor through a ULN2003 driver
  * to open and close a polyp mechanism (like a flower blooming).
  *
- * Instead of using the Stepper library, we drive the motor
- * directly using a "half-step" sequence. A stepper motor works
- * by energizing coils in a specific order — each change moves
- * the shaft one tiny step. The 28BYJ-48 takes 4096 half-steps
- * for one full 360° rotation.
+ * Uses FULL-STEP drive for maximum torque and speed. Each step
+ * energizes two coils at once, giving stronger holding force.
+ * Full-step = 2048 steps per revolution (vs 4096 in half-step).
+ * Less precise, but we don't need precision for this mechanism.
  *
- * Movement uses acceleration ramping: starts slow, speeds up
- * to peak, then slows down again at the end. This is gentler
- * on the mechanism and lets us push the peak speed higher than
- * a cold start would allow.
+ * Movement uses acceleration ramping for smooth starts/stops.
  *
  * WIRING (ULN2003 driver board -> Mega 2560):
  *   IN1 -> Pin 8
@@ -27,69 +23,59 @@
 // Motor control pins
 const int motorPins[4] = {8, 9, 10, 11};
 
-// Half-step sequence — each row is one step, telling which coils are ON.
-const int halfStepSeq[8][4] = {
-  {1, 0, 0, 0},
+// Full-step sequence — two coils energized at once for max torque.
+// Only 4 steps in the sequence (vs 8 for half-step).
+const int NUM_STEPS = 4;
+const int fullStepSeq[4][4] = {
   {1, 1, 0, 0},
-  {0, 1, 0, 0},
   {0, 1, 1, 0},
-  {0, 0, 1, 0},
   {0, 0, 1, 1},
-  {0, 0, 0, 1},
   {1, 0, 0, 1}
 };
 
-// 4096 half-steps = one full 360° rotation for the 28BYJ-48.
-// 340 degrees = 4096 * (340/360) ≈ 3868 steps.
-const int POLYP_RANGE = 3868;
+// 2048 full-steps = one full 360° rotation for the 28BYJ-48.
+// 340 degrees = 2048 * (340/360) ≈ 1934 steps.
+const int POLYP_RANGE = 1934;
 
 // Speed settings (in microseconds between steps).
-// Lower = faster. We ramp between these two values.
-const int SPEED_START = 2000;  // slow start — easy for the motor to get going
-const int SPEED_PEAK  = 800;   // aggressive peak — ramping lets us push past 1000
+// Full-step can go faster than half-step since each step
+// covers more angle. Pushing peak to 600us.
+const int SPEED_START = 1500;
+const int SPEED_PEAK  = 600;
 
-// What fraction of the move is spent ramping up / ramping down.
-// 0.15 = first 15% accelerating, last 15% decelerating, 70% at peak.
+// Ramp fraction — 15% accel at start, 15% decel at end.
 const float RAMP_FRACTION = 0.15;
 
 // Pause time (ms) when fully open or fully closed.
 const int PAUSE_OPEN = 2000;
 const int PAUSE_CLOSED = 1000;
 
-// Tracks our current position in the step sequence (0-7).
+// Tracks our current position in the step sequence (0-3).
 int stepIndex = 0;
 
 // Move the motor with acceleration ramping.
-// Positive steps = open (clockwise), negative = close (counter-clockwise).
 void moveSteps(int steps) {
   int direction = (steps > 0) ? 1 : -1;
   int totalSteps = abs(steps);
   int rampSteps = (int)(totalSteps * RAMP_FRACTION);
 
-  // Ensure we have at least a few ramp steps.
   if (rampSteps < 10) rampSteps = 10;
-
-  // If the move is so short that ramps would overlap, just split evenly.
   if (rampSteps * 2 > totalSteps) rampSteps = totalSteps / 2;
 
   for (int i = 0; i < totalSteps; i++) {
-    stepIndex = (stepIndex + direction + 8) % 8;
+    stepIndex = (stepIndex + direction + NUM_STEPS) % NUM_STEPS;
 
     for (int pin = 0; pin < 4; pin++) {
-      digitalWrite(motorPins[pin], halfStepSeq[stepIndex][pin]);
+      digitalWrite(motorPins[pin], fullStepSeq[stepIndex][pin]);
     }
 
-    // Calculate delay for this step using linear interpolation.
     int stepDelay;
     if (i < rampSteps) {
-      // Ramp UP: linearly decrease delay from SPEED_START to SPEED_PEAK.
       stepDelay = SPEED_START - (long)(SPEED_START - SPEED_PEAK) * i / rampSteps;
     } else if (i >= totalSteps - rampSteps) {
-      // Ramp DOWN: linearly increase delay from SPEED_PEAK back to SPEED_START.
       int stepsFromEnd = totalSteps - 1 - i;
       stepDelay = SPEED_START - (long)(SPEED_START - SPEED_PEAK) * stepsFromEnd / rampSteps;
     } else {
-      // Cruising at peak speed.
       stepDelay = SPEED_PEAK;
     }
 
@@ -109,7 +95,7 @@ void setup() {
     pinMode(motorPins[i], OUTPUT);
   }
 
-  Serial.println("Coral Polyp Prototype");
+  Serial.println("Coral Polyp Prototype - Full Step");
   Serial.println("Opening and closing polyp...");
 }
 
