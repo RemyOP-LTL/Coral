@@ -1,0 +1,17 @@
+# Compiled files
+*.o
+*.elf
+*.hex
+*.bin
+
+# Arduino build folders
+build/
+.build/
+
+# IDE settings
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
