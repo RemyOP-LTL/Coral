@@ -36,12 +36,13 @@ const int halfStepSeq[8][4] = {
 };
 
 // 4096 half-steps = one full 360° rotation for the 28BYJ-48.
-// 1024 half-steps = 90 degrees. Adjust to fit your mechanism.
-const int POLYP_RANGE = 1024;
+// 340 degrees = 4096 * (340/360) ≈ 3868 steps.
+const int POLYP_RANGE = 3868;
 
 // Delay between steps in microseconds — controls speed.
 // Lower = faster. The 28BYJ-48 stalls below ~1000us.
-const int STEP_DELAY_US = 1500;
+// Set to 1000 for max reliable speed.
+const int STEP_DELAY_US = 1000;
 
 // Pause time (ms) when fully open or fully closed.
 const int PAUSE_OPEN = 2000;
