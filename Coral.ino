@@ -40,11 +40,11 @@ const int POLYP_RANGE = 1934;
 // Speed settings (in microseconds between steps).
 // Full-step can go faster than half-step since each step
 // covers more angle. Pushing peak to 600us.
-const int SPEED_START = 1500;
-const int SPEED_PEAK  = 600;
+const int SPEED_START = 2500;
+const int SPEED_PEAK  = 1200;
 
-// Ramp fraction — 15% accel at start, 15% decel at end.
-const float RAMP_FRACTION = 0.15;
+// Ramp fraction — 25% accel at start, 25% decel at end.
+const float RAMP_FRACTION = 0.25;
 
 // Pause time (ms) when fully open or fully closed.
 const int PAUSE_OPEN = 2000;
