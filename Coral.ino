@@ -3,8 +3,8 @@
  *
  * Drives a 28BYJ-48 stepper motor through a ULN2003 driver.
  * Two modes toggled by a tactile button:
- *   - POLYP MODE: opens and closes with ramping (default)
- *   - SPIN MODE: continuous clockwise rotation at max speed
+ *   - POLYP MODE: opens and closes with ramping (default, LED off)
+ *   - SPIN MODE: continuous clockwise rotation (LED on)
  *
  * WIRING:
  *
@@ -20,6 +20,12 @@
  *     One leg  -> Pin 2
  *     Other leg -> GND
  *     (No resistor needed — we use the Mega's built-in pull-up)
+ *
+ *   Mode indicator LED -> Mega 2560:
+ *     Long leg (anode/+)  -> 220 ohm resistor -> Pin 13
+ *     Short leg (cathode/-) -> GND
+ *     (Pin 13 also has a built-in LED on the Mega board itself,
+ *      so you'll see it there even without wiring an external LED)
  */
 
 // Motor control pins
@@ -27,6 +33,9 @@ const int motorPins[4] = {8, 9, 10, 11};
 
 // Button on pin 2 (has hardware interrupt support on the Mega).
 const int BUTTON_PIN = 2;
+
+// LED on pin 13 — also the Mega's built-in LED.
+const int LED_PIN = 13;
 
 // Full-step sequence — two coils energized at once for max torque.
 const int NUM_STEPS = 4;
@@ -45,6 +54,9 @@ const int POLYP_RANGE = 1934;
 const int SPEED_START = 2500;
 const int SPEED_PEAK  = 1000;
 
+// Number of steps to ramp up when entering spin mode.
+const int SPIN_RAMP_STEPS = 200;
+
 // Ramp fraction — 25% accel at start, 25% decel at end.
 const float RAMP_FRACTION = 0.25;
 
@@ -57,6 +69,9 @@ int stepIndex = 0;
 
 // Mode toggle: false = polyp mode, true = spin mode.
 volatile bool spinMode = false;
+
+// Tracks whether spin mode has finished ramping up.
+bool spinRamped = false;
 
 // Debounce — ignore button presses within this window.
 volatile unsigned long lastButtonPress = 0;
@@ -89,7 +104,6 @@ void moveSteps(int steps) {
   if (rampSteps * 2 > totalSteps) rampSteps = totalSteps / 2;
 
   for (int i = 0; i < totalSteps; i++) {
-    // If mode changed mid-move, bail out.
     if (spinMode) return;
 
     singleStep(direction);
@@ -113,6 +127,17 @@ void moveSteps(int steps) {
   }
 }
 
+// Ramp up to full speed for spin mode.
+void spinRampUp() {
+  for (int i = 0; i < SPIN_RAMP_STEPS; i++) {
+    if (!spinMode) return;
+    singleStep(1);
+    int stepDelay = SPEED_START - (long)(SPEED_START - SPEED_PEAK) * i / SPIN_RAMP_STEPS;
+    delayMicroseconds(stepDelay);
+  }
+  spinRamped = true;
+}
+
 void setup() {
   Serial.begin(9600);
 
@@ -120,12 +145,9 @@ void setup() {
     pinMode(motorPins[i], OUTPUT);
   }
 
-  // INPUT_PULLUP means the pin reads HIGH normally and LOW when
-  // the button connects it to GND. No external resistor needed.
   pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(LED_PIN, OUTPUT);
 
-  // Attach interrupt — FALLING means it triggers when the pin
-  // goes from HIGH to LOW (i.e., when you press the button).
   attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), buttonISR, FALLING);
 
   Serial.println("Coral Polyp Prototype");
@@ -133,11 +155,20 @@ void setup() {
 }
 
 void loop() {
+  // Update LED to reflect current mode.
+  digitalWrite(LED_PIN, spinMode ? HIGH : LOW);
+
   if (spinMode) {
-    // SPIN MODE: continuous clockwise at max speed.
+    // SPIN MODE: ramp up first time, then cruise.
+    if (!spinRamped) {
+      spinRampUp();
+    }
     singleStep(1);
     delayMicroseconds(SPEED_PEAK);
   } else {
+    // Reset ramp flag when leaving spin mode.
+    spinRamped = false;
+
     // POLYP MODE: open and close with ramping.
     Serial.println("Opening...");
     moveSteps(POLYP_RANGE);
