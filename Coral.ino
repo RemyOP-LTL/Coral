@@ -1,30 +1,34 @@
 /*
  * Coral Polyp Prototype
  *
- * Drives a 28BYJ-48 stepper motor through a ULN2003 driver
- * to open and close a polyp mechanism (like a flower blooming).
+ * Drives a 28BYJ-48 stepper motor through a ULN2003 driver.
+ * Two modes toggled by a tactile button:
+ *   - POLYP MODE: opens and closes with ramping (default)
+ *   - SPIN MODE: continuous clockwise rotation at max speed
  *
- * Uses FULL-STEP drive for maximum torque and speed. Each step
- * energizes two coils at once, giving stronger holding force.
- * Full-step = 2048 steps per revolution (vs 4096 in half-step).
- * Less precise, but we don't need precision for this mechanism.
+ * WIRING:
  *
- * Movement uses acceleration ramping for smooth starts/stops.
+ *   ULN2003 driver board -> Mega 2560:
+ *     IN1 -> Pin 8
+ *     IN2 -> Pin 9
+ *     IN3 -> Pin 10
+ *     IN4 -> Pin 11
+ *     VCC -> 5V
+ *     GND -> GND
  *
- * WIRING (ULN2003 driver board -> Mega 2560):
- *   IN1 -> Pin 8
- *   IN2 -> Pin 9
- *   IN3 -> Pin 10
- *   IN4 -> Pin 11
- *   VCC -> 5V
- *   GND -> GND
+ *   Tactile switch -> Mega 2560:
+ *     One leg  -> Pin 2
+ *     Other leg -> GND
+ *     (No resistor needed — we use the Mega's built-in pull-up)
  */
 
 // Motor control pins
 const int motorPins[4] = {8, 9, 10, 11};
 
+// Button on pin 2 (has hardware interrupt support on the Mega).
+const int BUTTON_PIN = 2;
+
 // Full-step sequence — two coils energized at once for max torque.
-// Only 4 steps in the sequence (vs 8 for half-step).
 const int NUM_STEPS = 4;
 const int fullStepSeq[4][4] = {
   {1, 1, 0, 0},
@@ -38,8 +42,6 @@ const int fullStepSeq[4][4] = {
 const int POLYP_RANGE = 1934;
 
 // Speed settings (in microseconds between steps).
-// Full-step can go faster than half-step since each step
-// covers more angle. Pushing peak to 600us.
 const int SPEED_START = 2500;
 const int SPEED_PEAK  = 1000;
 
@@ -53,6 +55,30 @@ const int PAUSE_CLOSED = 1000;
 // Tracks our current position in the step sequence (0-3).
 int stepIndex = 0;
 
+// Mode toggle: false = polyp mode, true = spin mode.
+volatile bool spinMode = false;
+
+// Debounce — ignore button presses within this window.
+volatile unsigned long lastButtonPress = 0;
+const unsigned long DEBOUNCE_MS = 250;
+
+// Called automatically when button is pressed (interrupt).
+void buttonISR() {
+  unsigned long now = millis();
+  if (now - lastButtonPress > DEBOUNCE_MS) {
+    spinMode = !spinMode;
+    lastButtonPress = now;
+  }
+}
+
+// Take a single step in the given direction.
+void singleStep(int direction) {
+  stepIndex = (stepIndex + direction + NUM_STEPS) % NUM_STEPS;
+  for (int pin = 0; pin < 4; pin++) {
+    digitalWrite(motorPins[pin], fullStepSeq[stepIndex][pin]);
+  }
+}
+
 // Move the motor with acceleration ramping.
 void moveSteps(int steps) {
   int direction = (steps > 0) ? 1 : -1;
@@ -63,11 +89,10 @@ void moveSteps(int steps) {
   if (rampSteps * 2 > totalSteps) rampSteps = totalSteps / 2;
 
   for (int i = 0; i < totalSteps; i++) {
-    stepIndex = (stepIndex + direction + NUM_STEPS) % NUM_STEPS;
+    // If mode changed mid-move, bail out.
+    if (spinMode) return;
 
-    for (int pin = 0; pin < 4; pin++) {
-      digitalWrite(motorPins[pin], fullStepSeq[stepIndex][pin]);
-    }
+    singleStep(direction);
 
     int stepDelay;
     if (i < rampSteps) {
@@ -82,7 +107,7 @@ void moveSteps(int steps) {
     delayMicroseconds(stepDelay);
   }
 
-  // Turn off all coils when done to save power and reduce heat.
+  // Turn off all coils when done.
   for (int pin = 0; pin < 4; pin++) {
     digitalWrite(motorPins[pin], LOW);
   }
@@ -95,16 +120,34 @@ void setup() {
     pinMode(motorPins[i], OUTPUT);
   }
 
-  Serial.println("Coral Polyp Prototype - Full Step");
-  Serial.println("Opening and closing polyp...");
+  // INPUT_PULLUP means the pin reads HIGH normally and LOW when
+  // the button connects it to GND. No external resistor needed.
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+
+  // Attach interrupt — FALLING means it triggers when the pin
+  // goes from HIGH to LOW (i.e., when you press the button).
+  attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), buttonISR, FALLING);
+
+  Serial.println("Coral Polyp Prototype");
+  Serial.println("Press button to toggle polyp/spin mode");
 }
 
 void loop() {
-  Serial.println("Opening...");
-  moveSteps(POLYP_RANGE);
-  delay(PAUSE_OPEN);
+  if (spinMode) {
+    // SPIN MODE: continuous clockwise at max speed.
+    singleStep(1);
+    delayMicroseconds(SPEED_PEAK);
+  } else {
+    // POLYP MODE: open and close with ramping.
+    Serial.println("Opening...");
+    moveSteps(POLYP_RANGE);
+    if (spinMode) return;
+    delay(PAUSE_OPEN);
 
-  Serial.println("Closing...");
-  moveSteps(-POLYP_RANGE);
-  delay(PAUSE_CLOSED);
+    if (spinMode) return;
+    Serial.println("Closing...");
+    moveSteps(-POLYP_RANGE);
+    if (spinMode) return;
+    delay(PAUSE_CLOSED);
+  }
 }
