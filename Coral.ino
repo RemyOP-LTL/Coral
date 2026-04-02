@@ -10,6 +10,11 @@
  * the shaft one tiny step. The 28BYJ-48 takes 4096 half-steps
  * for one full 360° rotation.
  *
+ * Movement uses acceleration ramping: starts slow, speeds up
+ * to peak, then slows down again at the end. This is gentler
+ * on the mechanism and lets us push the peak speed higher than
+ * a cold start would allow.
+ *
  * WIRING (ULN2003 driver board -> Mega 2560):
  *   IN1 -> Pin 8
  *   IN2 -> Pin 9
@@ -23,7 +28,6 @@
 const int motorPins[4] = {8, 9, 10, 11};
 
 // Half-step sequence — each row is one step, telling which coils are ON.
-// This gives smoother motion and double the resolution vs full-step.
 const int halfStepSeq[8][4] = {
   {1, 0, 0, 0},
   {1, 1, 0, 0},
@@ -39,10 +43,14 @@ const int halfStepSeq[8][4] = {
 // 340 degrees = 4096 * (340/360) ≈ 3868 steps.
 const int POLYP_RANGE = 3868;
 
-// Delay between steps in microseconds — controls speed.
-// Lower = faster. The 28BYJ-48 stalls below ~1000us.
-// Set to 1000 for max reliable speed.
-const int STEP_DELAY_US = 1000;
+// Speed settings (in microseconds between steps).
+// Lower = faster. We ramp between these two values.
+const int SPEED_START = 2000;  // slow start — easy for the motor to get going
+const int SPEED_PEAK  = 800;   // aggressive peak — ramping lets us push past 1000
+
+// What fraction of the move is spent ramping up / ramping down.
+// 0.15 = first 15% accelerating, last 15% decelerating, 70% at peak.
+const float RAMP_FRACTION = 0.15;
 
 // Pause time (ms) when fully open or fully closed.
 const int PAUSE_OPEN = 2000;
@@ -51,20 +59,41 @@ const int PAUSE_CLOSED = 1000;
 // Tracks our current position in the step sequence (0-7).
 int stepIndex = 0;
 
-// Move the motor a given number of steps.
-// Positive = open (clockwise), negative = close (counter-clockwise).
+// Move the motor with acceleration ramping.
+// Positive steps = open (clockwise), negative = close (counter-clockwise).
 void moveSteps(int steps) {
   int direction = (steps > 0) ? 1 : -1;
-  steps = abs(steps);
+  int totalSteps = abs(steps);
+  int rampSteps = (int)(totalSteps * RAMP_FRACTION);
 
-  for (int i = 0; i < steps; i++) {
+  // Ensure we have at least a few ramp steps.
+  if (rampSteps < 10) rampSteps = 10;
+
+  // If the move is so short that ramps would overlap, just split evenly.
+  if (rampSteps * 2 > totalSteps) rampSteps = totalSteps / 2;
+
+  for (int i = 0; i < totalSteps; i++) {
     stepIndex = (stepIndex + direction + 8) % 8;
 
     for (int pin = 0; pin < 4; pin++) {
       digitalWrite(motorPins[pin], halfStepSeq[stepIndex][pin]);
     }
 
-    delayMicroseconds(STEP_DELAY_US);
+    // Calculate delay for this step using linear interpolation.
+    int stepDelay;
+    if (i < rampSteps) {
+      // Ramp UP: linearly decrease delay from SPEED_START to SPEED_PEAK.
+      stepDelay = SPEED_START - (long)(SPEED_START - SPEED_PEAK) * i / rampSteps;
+    } else if (i >= totalSteps - rampSteps) {
+      // Ramp DOWN: linearly increase delay from SPEED_PEAK back to SPEED_START.
+      int stepsFromEnd = totalSteps - 1 - i;
+      stepDelay = SPEED_START - (long)(SPEED_START - SPEED_PEAK) * stepsFromEnd / rampSteps;
+    } else {
+      // Cruising at peak speed.
+      stepDelay = SPEED_PEAK;
+    }
+
+    delayMicroseconds(stepDelay);
   }
 
   // Turn off all coils when done to save power and reduce heat.
