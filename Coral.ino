@@ -41,7 +41,7 @@ const int POLYP_RANGE = 1934;
 // Full-step can go faster than half-step since each step
 // covers more angle. Pushing peak to 600us.
 const int SPEED_START = 2500;
-const int SPEED_PEAK  = 1200;
+const int SPEED_PEAK  = 1000;
 
 // Ramp fraction — 25% accel at start, 25% decel at end.
 const float RAMP_FRACTION = 0.25;
